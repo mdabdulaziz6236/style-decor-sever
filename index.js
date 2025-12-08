@@ -33,6 +33,11 @@ async function run() {
       const user = req.body;
       user.role = "user";
       user.createdAt = new Date();
+      const email = user.email;
+      const userExist = await usersCollection.findOne({ email });
+      if (userExist) {
+        return res.send({ message: "user exist" });
+      }
       const result = await usersCollection.insertOne(user);
       res.send(result);
     });
