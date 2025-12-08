@@ -26,9 +26,11 @@ async function run() {
 
     const db = client.db("style-decor-db");
     const usersCollection = db.collection("users");
+    const contactCollection = db.collection("contact");
+    const decoratorsCollection = db.collection("decorators");
 
     /* USERS APIS */
-
+    /* create user */
     app.post("/users", async (req, res) => {
       const user = req.body;
       user.role = "user";
@@ -41,7 +43,27 @@ async function run() {
       const result = await usersCollection.insertOne(user);
       res.send(result);
     });
-
+    /* get role from user */
+    app.get("/users/:email/role", async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+      res.send({ role: user?.role || "user" });
+    });
+    /* User Contact message related APIS */
+    app.post("/contact", async (req, res) => {
+      const messageData = req.body;
+      const result = await contactCollection.insertOne(messageData);
+      res.send(result);
+    });
+    /* Decorators Related APIS */
+    app.post("/decorators", async (req, res) => {
+      const decorator = req.body;
+      decorator.status = "pending";
+      decorator.createdAt = new Date();
+      const result = await decoratorsCollection.insertOne(decorator);
+      res.send(result);
+    });
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
