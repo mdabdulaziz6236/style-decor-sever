@@ -3,7 +3,7 @@ const cors = require("cors");
 const app = express();
 const port = process.env.PORT || 3000;
 require("dotenv").config();
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 /* middleware */
 app.use(express.json());
@@ -62,6 +62,50 @@ async function run() {
       decorator.status = "pending";
       decorator.createdAt = new Date();
       const result = await decoratorsCollection.insertOne(decorator);
+      res.send(result);
+    });
+    app.get("/decorators", async (req, res) => {
+      const query = {};
+      const result = await decoratorsCollection.find(query).toArray();
+      res.send(result);
+    });
+    app.patch("/decorators/:id", async (req, res) => {
+      const status = req.body.status;
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          status: status,
+          workStatus: "available",
+        },
+      };
+      const result = await decoratorsCollection.updateOne(query, updateDoc);
+      if (status === "approved") {
+        const email = req.body.email;
+        const userQuery = { email };
+        const updateUser = {
+          $set: {
+            role: "decorator",
+          },
+        };
+        const userResult = await usersCollection.updateOne(
+          userQuery,
+          updateUser
+        );
+      }
+      if (status === "rejected") {
+        const email = req.body.email;
+        const userQuery = { email };
+        const updateUser = {
+          $set: {
+            role: "user",
+          },
+        };
+        const userResult = await usersCollection.updateOne(
+          userQuery,
+          updateUser
+        );
+      }
       res.send(result);
     });
     // Send a ping to confirm a successful connection
