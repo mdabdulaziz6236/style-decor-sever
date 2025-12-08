@@ -50,6 +50,23 @@ async function run() {
       const user = await usersCollection.findOne(query);
       res.send({ role: user?.role || "user" });
     });
+    /* get user info by email */
+    app.get("/users/:email", async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const result = await usersCollection.findOne(query);
+      res.send(result);
+    });
+    app.patch("/users/:email", async (req, res) => {
+      const email = req.params.email;
+      const updateDoc = req.body;
+      const filter = { email: email };
+      const update = {
+        $set: updateDoc,
+      };
+      const result = await usersCollection.updateOne(filter, update);
+      res.send(result);
+    });
     /* User Contact message related APIS */
     app.post("/contact", async (req, res) => {
       const messageData = req.body;
@@ -106,6 +123,12 @@ async function run() {
           updateUser
         );
       }
+      res.send(result);
+    });
+    app.delete("/decorators/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await decoratorsCollection.deleteOne(query);
       res.send(result);
     });
     // Send a ping to confirm a successful connection
