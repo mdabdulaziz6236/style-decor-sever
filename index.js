@@ -28,6 +28,7 @@ async function run() {
     const usersCollection = db.collection("users");
     const contactCollection = db.collection("contact");
     const decoratorsCollection = db.collection("decorators");
+    const servicesCollection = db.collection("services");
 
     /* USERS APIS */
     /* create user */
@@ -73,7 +74,9 @@ async function run() {
       const result = await contactCollection.insertOne(messageData);
       res.send(result);
     });
+    /* --------------------------------- */
     /* Decorators Related APIS */
+    /* --------------------------------- */
     app.post("/decorators", async (req, res) => {
       const decorator = req.body;
       decorator.status = "pending";
@@ -129,6 +132,58 @@ async function run() {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await decoratorsCollection.deleteOne(query);
+      res.send(result);
+    });
+    /* --------------------------------- */
+    /* Service Related APIS */
+    /* --------------------------------- */
+    // Get All Services with Filter, Search & Sort
+    app.get("/services", async (req, res) => {
+      const search = req.query.search;
+      const category = req.query.category;
+      const sort = req.query.sort;
+
+      // Pagination params
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 100;
+      const skip = (page - 1) * limit;
+
+      let query = { status: "active" };
+
+      if (search) {
+        query.service_name = { $regex: search, $options: "i" };
+      }
+      if (category) {
+        query.category = category;
+      }
+
+      let sortOptions = {};
+      if (sort === "asc") {
+        sortOptions = { cost: 1 };
+      } else if (sort === "desc") {
+        sortOptions = { cost: -1 };
+      }
+      const result = await servicesCollection
+        .find(query)
+        .sort(sortOptions)
+        .skip(skip)
+        .limit(limit)
+        .toArray();
+      const totalCount = await servicesCollection.countDocuments(query);
+
+      res.send({ result, count: totalCount });
+    });
+
+    // Get Single Service Details
+    app.get("/services/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await servicesCollection.findOne(query);
+      res.send(result);
+    });
+    app.post("/services", async (req, res) => {
+      const servicesInfo = req.body;
+      const result = await servicesCollection.insertOne(servicesInfo);
       res.send(result);
     });
     // Send a ping to confirm a successful connection
