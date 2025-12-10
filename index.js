@@ -5,13 +5,20 @@ const port = process.env.PORT || 3000;
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const admin = require("firebase-admin");
+const crypto = require("crypto");
 
 const serviceAccount = require(`./${process.env.FIREBASE_SERVICE_ACCOUNT}`);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
-
+// --- Tracking ID Generator Function ---
+const generateTrackingId = () => {
+  const prefix = "TSD";
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const random = crypto.randomBytes(4).toString("hex").toUpperCase();
+  return `${prefix}-${date}-${random}`;
+};
 /* middleware */
 app.use(express.json());
 app.use(cors());
@@ -52,6 +59,8 @@ async function run() {
     const decoratorsCollection = db.collection("decorators");
     const servicesCollection = db.collection("services");
     const bookingsCollection = db.collection("bookings");
+    const trackingsCollection = db.collection("trackings");
+
     /* --------------MIDDLE ADMIN BEFORE ALLOWING ADMIN ACTIVITY------------- */
     /* --------------!!! MUST BE USED AFTER VerifyFBToken !!!!------------- */
 
@@ -72,6 +81,16 @@ async function run() {
         return res.status(403).send({ message: "forbidden access" });
       }
       next();
+    };
+    const logTracking = async (trackingId, status) => {
+      const log = {
+        trackingId,
+        status,
+        details: status.split("-").join(" "),
+        createdAt: new Date(),
+      };
+      const result = await trackingsCollection.insertOne(log);
+      return result;
     };
     /* USERS APIS */
     /* create user */
@@ -232,12 +251,16 @@ async function run() {
     /* --------------------------------- */
     /* bookings Related APIS */
     /* --------------------------------- */
-    app.post("/bookings", async (req, res) => {
+    app.post("/bookings", verifyFirebaseToken, async (req, res) => {
       const bookingsInfo = req.body;
       (bookingsInfo.createdAt = new Date()),
+        (bookingsInfo.trackingId = generateTrackingId()),
         (bookingsInfo.status = "pending"),
         (bookingsInfo.paymentStatus = "pending");
+      const trackingId = bookingsInfo.trackingId;
+
       const result = await bookingsCollection.insertOne(bookingsInfo);
+      await logTracking(trackingId, "booking-Placed");
       res.send(result);
     });
     app.get("/bookings", verifyFirebaseToken, async (req, res) => {
