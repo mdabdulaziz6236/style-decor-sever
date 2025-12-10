@@ -52,7 +52,27 @@ async function run() {
     const decoratorsCollection = db.collection("decorators");
     const servicesCollection = db.collection("services");
     const bookingsCollection = db.collection("bookings");
+    /* --------------MIDDLE ADMIN BEFORE ALLOWING ADMIN ACTIVITY------------- */
+    /* --------------!!! MUST BE USED AFTER VerifyFBToken !!!!------------- */
 
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next();
+    };
+    const verifyDecorator = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+      if (!user || user.role !== "decorator") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next();
+    };
     /* USERS APIS */
     /* create user */
     app.post("/users", async (req, res) => {
