@@ -1,9 +1,10 @@
 const express = require("express");
 const cors = require("cors");
 const app = express();
-const port = process.env.PORT || 3000;
 require("dotenv").config();
+const stripe = require("stripe")(process.env.STRIPE_SECRET);
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const port = process.env.PORT || 3000;
 const admin = require("firebase-admin");
 const crypto = require("crypto");
 
@@ -60,6 +61,7 @@ async function run() {
     const servicesCollection = db.collection("services");
     const bookingsCollection = db.collection("bookings");
     const trackingsCollection = db.collection("trackings");
+    const paymentsCollection = db.collection("payments");
 
     /* --------------MIDDLE ADMIN BEFORE ALLOWING ADMIN ACTIVITY------------- */
     /* --------------!!! MUST BE USED AFTER VerifyFBToken !!!!------------- */
@@ -102,7 +104,95 @@ async function run() {
       const result = await trackingsCollection.find(query).toArray();
       res.send(result);
     });
+    /* --------------------------------- */
+    /* payment Related APIS */
+    /* --------------------------------- */
+    app.post("/payment-checkout-session", async (req, res) => {
+      const bookingInfo = req.body;
+      const amount = parseInt(bookingInfo.cost) * 100;
+      const session = await stripe.checkout.sessions.create({
+        line_items: [
+          {
+            price_data: {
+              currency: "BDT",
+              unit_amount: amount,
+              product_data: {
+                name: `Please pay for ${bookingInfo.bookingName}`,
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        mode: "payment",
+        metadata: {
+          bookingId: bookingInfo.bookingId,
+          bookingName: bookingInfo.bookingName,
+          trackingId: bookingInfo.trackingId,
+        },
+        customer_email: bookingInfo.userEmail,
+        success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
+      });
+      res.send({ url: session.url });
+    });
 
+    app.patch("/payment-success", async (req, res) => {
+      const sessionId = req.query.session_id;
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+      const transactionId = session.payment_intent;
+      const query = { transactionId: transactionId };
+      // reduce repeat add form database
+      const paymentExist = await paymentsCollection.findOne(query);
+      if (paymentExist) {
+        return res.send({
+          message: "already exists",
+          transactionId,
+          trackingId: paymentExist.trackingId,
+        });
+      }
+      // use the previous tracking id created during the parcel create which was set to the session metadata during session creation
+      if (session.payment_status === "paid") {
+        const trackingId = session.metadata.trackingId;
+        const id = session.metadata.bookingId;
+        const query = { _id: new ObjectId(id) };
+        const update = {
+          $set: {
+            paymentStatus: "paid",
+            serviceStatus: "pending-assign",
+          },
+        };
+        const result = await bookingsCollection.updateOne(query, update);
+        const payment = {
+          amount: session.amount_total / 100,
+          currency: session.currency,
+          customerEmail: session.customer_email,
+          bookingId: session.metadata.bookingId,
+          service_name: session.metadata.bookingName,
+          transactionId: session.payment_intent,
+          paymentStatus: session.payment_status,
+          paidAt: new Date(),
+          trackingId: trackingId,
+        };
+
+        const resultPayment = await paymentsCollection.insertOne(payment);
+       await logTracking(trackingId, "booking-paid");
+        return res.send({
+          success: true,
+          modifyBooking: result,
+          trackingId: trackingId,
+          transactionId: session.payment_intent,
+          paymentInfo: resultPayment,
+        });
+      }
+      return res.send({ success: false });
+    });
+    app.get("/payments", async (req, res) => {
+      const email = req.query.email;
+      const query = { customerEmail:email };
+      const result = await paymentsCollection.find(query).toArray();
+      res.send(result);
+    });
     /* USERS APIS */
     /* create user */
     app.post("/users", async (req, res) => {
@@ -266,7 +356,7 @@ async function run() {
       const bookingsInfo = req.body;
       (bookingsInfo.createdAt = new Date()),
         (bookingsInfo.trackingId = generateTrackingId()),
-        (bookingsInfo.status = "pending"),
+        (bookingsInfo.serviceStatus = "pending"),
         (bookingsInfo.paymentStatus = "pending");
       const trackingId = bookingsInfo.trackingId;
 
