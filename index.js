@@ -92,6 +92,17 @@ async function run() {
       const result = await trackingsCollection.insertOne(log);
       return result;
     };
+    /* --------------------------------- */
+    /* Service Related APIS */
+    /* --------------------------------- */
+
+    app.get("/bookings/track/:trackingId", async (req, res) => {
+      const trackingId = req.params.trackingId;
+      const query = { trackingId };
+      const result = await trackingsCollection.find(query).toArray();
+      res.send(result);
+    });
+
     /* USERS APIS */
     /* create user */
     app.post("/users", async (req, res) => {
