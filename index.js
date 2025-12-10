@@ -29,6 +29,7 @@ async function run() {
     const contactCollection = db.collection("contact");
     const decoratorsCollection = db.collection("decorators");
     const servicesCollection = db.collection("services");
+    const bookingsCollection = db.collection("bookings");
 
     /* USERS APIS */
     /* create user */
@@ -184,6 +185,17 @@ async function run() {
     app.post("/services", async (req, res) => {
       const servicesInfo = req.body;
       const result = await servicesCollection.insertOne(servicesInfo);
+      res.send(result);
+    });
+    /* --------------------------------- */
+    /* bookings Related APIS */
+    /* --------------------------------- */
+    app.post("/bookings", async (req, res) => {
+      const bookingsInfo = req.body;
+      (bookingsInfo.createdAt = new Date()),
+        (bookingsInfo.status = "pending"),
+        (bookingsInfo.paymentStatus = "pending");
+      const result = await bookingsCollection.insertOne(bookingsInfo);
       res.send(result);
     });
     // Send a ping to confirm a successful connection
