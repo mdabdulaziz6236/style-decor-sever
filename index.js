@@ -4,10 +4,32 @@ const app = express();
 const port = process.env.PORT || 3000;
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const admin = require("firebase-admin");
+
+const serviceAccount = require(`./${process.env.FIREBASE_SERVICE_ACCOUNT}`);
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 /* middleware */
 app.use(express.json());
 app.use(cors());
+
+const verifyFirebaseToken = async (req, res, next) => {
+  const token = req.headers.authorization;
+  if (!token) {
+    res.status(401).send({ message: "unauthorized access" });
+  }
+  try {
+    const idToken = token.split(" ")[1];
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    req.decoded_email = decoded.email;
+    next();
+  } catch (error) {
+    res.status(401).send({ message: "unauthorized access" });
+  }
+};
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.jdeeqhi.mongodb.net/?appName=Cluster0`;
 
@@ -198,7 +220,7 @@ async function run() {
       const result = await bookingsCollection.insertOne(bookingsInfo);
       res.send(result);
     });
-    app.get("/bookings", async (req, res) => {
+    app.get("/bookings", verifyFirebaseToken, async (req, res) => {
       const email = req.query.email;
       const query = { user_email: email };
       const result = await bookingsCollection.find(query).toArray();
