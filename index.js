@@ -319,6 +319,47 @@ async function run() {
         res.status(500).send({ message: "Error fetching user stats" });
       }
     });
+    /* MANAGE USER  */
+    app.get('/users-for-admin', verifyFirebaseToken, verifyAdmin, async (req, res) => {
+      const result = await usersCollection.find().toArray();
+      res.send(result);
+    });
+    app.patch('/users/admin/:id', verifyFirebaseToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const updatedDoc = {
+        $set: {
+          role: 'admin'
+        }
+      };
+      const result = await usersCollection.updateOne(filter, updatedDoc);
+      res.send(result);
+    });
+    app.delete('/users/:id', verifyFirebaseToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+
+      try {
+        const user = await usersCollection.findOne(query);
+
+        if (!user) {
+          return res.status(404).send({ message: "User not found in database" });
+        }
+        try {
+            const firebaseUser = await admin.auth().getUserByEmail(user.email);
+            await admin.auth().deleteUser(firebaseUser.uid);
+            console.log("Successfully deleted user from Firebase:", user.email);
+        } catch (firebaseError) {
+            console.log("Error deleting from Firebase (might not exist):", firebaseError.message);
+        }
+        const result = await usersCollection.deleteOne(query);
+        res.send(result);
+
+      } catch (error) {
+        console.error("Error in delete API:", error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
     /* create user */
     app.post("/users", async (req, res) => {
       const user = req.body;
