@@ -165,6 +165,7 @@ async function run() {
           $set: {
             paymentStatus: "paid",
             serviceStatus: "pending-assign",
+            transactionId: session.payment_intent,
           },
         };
         const result = await bookingsCollection.updateOne(query, update);
@@ -198,6 +199,78 @@ async function run() {
       const result = await paymentsCollection.find(query).toArray();
       res.send(result);
     });
+    /* ADMIN STAT API */
+    app.get(
+      "/admin-stats",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const totalUsers = await usersCollection.estimatedDocumentCount();
+          const totalBookings =
+            await bookingsCollection.estimatedDocumentCount();
+          const totalServices =
+            await servicesCollection.estimatedDocumentCount();
+
+          // Revenue Calculation
+          const revenueResult = await paymentsCollection
+            .aggregate([
+              { $group: { _id: null, totalRevenue: { $sum: "$amount" } } },
+            ])
+            .toArray();
+          const totalRevenue =
+            revenueResult.length > 0 ? revenueResult[0].totalRevenue : 0;
+          // Service Demand Chart
+          const serviceDemand = await bookingsCollection
+            .aggregate([
+              { $group: { _id: "$service_name", count: { $sum: 1 } } },
+              { $sort: { count: -1 } },
+              { $limit: 6 },
+            ])
+            .toArray();
+          // Booking Status Chart
+          const bookingStatus = await bookingsCollection
+            .aggregate([
+              { $group: { _id: "$serviceStatus", count: { $sum: 1 } } },
+            ])
+            .toArray();
+          const recentBookings = await bookingsCollection
+            .aggregate([
+              { $sort: { createdAt: -1 } },
+              { $limit: 10 },
+              {
+                $lookup: {
+                  from: "trackings",
+                  let: { booking_trackingId: "$trackingId" },
+                  pipeline: [
+                    {
+                      $match: {
+                        $expr: { $eq: ["$trackingId", "$$booking_trackingId"] },
+                      },
+                    },
+                    { $sort: { createdAt: -1 } },
+                  ],
+                  as: "trackingHistory",
+                },
+              },
+            ])
+            .toArray();
+
+          res.send({
+            totalUsers,
+            totalBookings,
+            totalServices,
+            totalRevenue,
+            serviceDemand,
+            bookingStatus,
+            recentBookings,
+          });
+        } catch (error) {
+          console.error(error);
+          res.status(500).send({ message: "Error fetching admin stats" });
+        }
+      }
+    );
     /* USERS APIS */
     /* create user */
     app.post("/users", async (req, res) => {
@@ -303,99 +376,129 @@ async function run() {
       res.send(result);
     });
     //  DECORATOR EARNINGS API
-    app.get('/decorator/earnings', verifyFirebaseToken, verifyDecorator, async (req, res) => {
+    app.get(
+      "/decorator/earnings",
+      verifyFirebaseToken,
+      verifyDecorator,
+      async (req, res) => {
         try {
-            const email = req.query.email;
-            const query = { 
-                decoratorEmail: email,
-                paymentStatus: 'paid',
-                serviceStatus: 'Completed' 
-            };
+          const email = req.query.email;
+          const query = {
+            decoratorEmail: email,
+            paymentStatus: "paid",
+            serviceStatus: "Completed",
+          };
 
-            const bookings = await bookingsCollection.find(query).sort({ booking_date: -1 }).toArray();
-            const totalEarnings = bookings.reduce((sum, item) => {
-                const cost = parseFloat(item.service_cost);
-                return sum + (isNaN(cost) ? 0 : cost);
-            }, 0);
-            const completedTasks = bookings.length;
-            const chartData = bookings.slice(0, 6).map(item => {
-                const dateObj = new Date(item.booking_date);
-                const dateStr = !isNaN(dateObj) 
-                    ? dateObj.toLocaleDateString('en-US', { day: 'numeric', month: 'short' }) 
-                    : 'N/A';
-                
-                return {
-                    name: item.service_name?.substring(0, 10) + '...', // Short name
-                    date: dateStr,
-                    amount: parseFloat(item.service_cost || 0)
-                };
-            }).reverse();
+          const bookings = await bookingsCollection
+            .find(query)
+            .sort({ booking_date: -1 })
+            .toArray();
+          const totalEarnings = bookings.reduce((sum, item) => {
+            const cost = parseFloat(item.service_cost);
+            return sum + (isNaN(cost) ? 0 : cost);
+          }, 0);
+          const completedTasks = bookings.length;
+          const chartData = bookings
+            .slice(0, 6)
+            .map((item) => {
+              const dateObj = new Date(item.booking_date);
+              const dateStr = !isNaN(dateObj)
+                ? dateObj.toLocaleDateString("en-US", {
+                    day: "numeric",
+                    month: "short",
+                  })
+                : "N/A";
 
-            res.send({
-                totalEarnings,
-                completedTasks,
-                bookings,
-                chartData
-            });
+              return {
+                name: item.service_name?.substring(0, 10) + "...", // Short name
+                date: dateStr,
+                amount: parseFloat(item.service_cost || 0),
+              };
+            })
+            .reverse();
 
+          res.send({
+            totalEarnings,
+            completedTasks,
+            bookings,
+            chartData,
+          });
         } catch (error) {
-            console.error("Earnings API Error:", error);
-            res.status(500).send({ message: "Internal Server Error", error: error.message });
+          console.error("Earnings API Error:", error);
+          res
+            .status(500)
+            .send({ message: "Internal Server Error", error: error.message });
         }
-    });
-// ---------------------------------------------------------
+      }
+    );
+    // ---------------------------------------------------------
     //  DECORATOR HOME STATS API (Clean Data Only)
     // ---------------------------------------------------------
-    app.get('/decorator/stats/homepage', verifyFirebaseToken, verifyDecorator, async (req, res) => {
+    app.get(
+      "/decorator/stats/homepage",
+      verifyFirebaseToken,
+      verifyDecorator,
+      async (req, res) => {
         try {
-            const email = req.query.email;
-            if (req.decoded_email !== email) {
-                return res.status(403).send({ message: 'forbidden access' });
+          const email = req.query.email;
+          if (req.decoded_email !== email) {
+            return res.status(403).send({ message: "forbidden access" });
+          }
+          const query = { decoratorEmail: email };
+          const allTasks = await bookingsCollection.find(query).toArray();
+          // 1. Calculations
+          const totalAssigned = allTasks.length;
+          const pendingCount = allTasks.filter(
+            (task) => task.serviceStatus === "Decorator_Assigned"
+          ).length;
+          const acceptedCount = allTasks.filter(
+            (task) => task.serviceStatus === "Decorator_Accepted"
+          ).length;
+          const workingCount = allTasks.filter(
+            (task) => task.serviceStatus === "Working"
+          ).length;
+          const completedCount = allTasks.filter(
+            (task) => task.serviceStatus === "Completed"
+          ).length;
+
+          // 2. Earnings
+          const totalEarnings = allTasks.reduce((sum, task) => {
+            if (
+              task.paymentStatus === "paid" &&
+              task.serviceStatus === "Completed"
+            ) {
+              return sum + (parseFloat(task.service_cost) || 0);
             }
-            const query = { decoratorEmail: email };
-            const allTasks = await bookingsCollection.find(query).toArray();
-            // 1. Calculations
-            const totalAssigned = allTasks.length; 
-            const pendingCount = allTasks.filter(task => task.serviceStatus === 'Decorator_Assigned').length;
-            const acceptedCount = allTasks.filter(task => task.serviceStatus === 'Decorator_Accepted').length;
-            const workingCount = allTasks.filter(task => task.serviceStatus === 'Working').length;
-            const completedCount = allTasks.filter(task => task.serviceStatus === 'Completed').length;
+            return sum;
+          }, 0);
 
-            // 2. Earnings
-            const totalEarnings = allTasks.reduce((sum, task) => {
-                if (task.paymentStatus === 'paid' && task.serviceStatus === 'Completed') {
-                    return sum + (parseFloat(task.service_cost) || 0);
-                }
-                return sum;
-            }, 0);
+          // 3. Pie Chart Data
+          const pieData = [
+            { name: "Assigned", value: pendingCount },
+            { name: "Accepted", value: acceptedCount },
+            { name: "Working", value: workingCount },
+            { name: "Completed", value: completedCount },
+          ];
+          const recentBookings = await bookingsCollection
+            .find(query)
+            .sort({ assignedAt: -1 })
+            .limit(5)
+            .toArray();
 
-            // 3. Pie Chart Data
-            const pieData = [
-                { name: 'Assigned', value: pendingCount },
-                { name: 'Accepted', value: acceptedCount },
-                { name: 'Working', value: workingCount },
-                { name: 'Completed', value: completedCount }
-            ];
-            const recentBookings = await bookingsCollection
-                .find(query)
-                .sort({ assignedAt: -1 })
-                .limit(5)
-                .toArray();
-
-            res.send({
-                totalAssigned,
-                activeTasks: workingCount,
-                completedTasks: completedCount,
-                totalEarnings,
-                pieData,
-                recentBookings
-            });
-
+          res.send({
+            totalAssigned,
+            activeTasks: workingCount,
+            completedTasks: completedCount,
+            totalEarnings,
+            pieData,
+            recentBookings,
+          });
         } catch (error) {
-            console.error("Stats API Error:", error);
-            res.status(500).send({ message: "Internal Server Error" });
+          console.error("Stats API Error:", error);
+          res.status(500).send({ message: "Internal Server Error" });
         }
-    });
+      }
+    );
     /* --------------------------------- */
     /* Service Related APIS */
     /* --------------------------------- */
@@ -580,7 +683,10 @@ async function run() {
         }
         const query = { decoratorEmail: email };
 
-        const result = await bookingsCollection.find(query).sort({ booking_date: -1 }).toArray();
+        const result = await bookingsCollection
+          .find(query)
+          .sort({ booking_date: -1 })
+          .toArray();
         res.send(result);
       }
     );
