@@ -302,6 +302,47 @@ async function run() {
       const result = await decoratorsCollection.deleteOne(query);
       res.send(result);
     });
+    //  DECORATOR EARNINGS API
+    app.get('/decorator/earnings', verifyFirebaseToken, verifyDecorator, async (req, res) => {
+        try {
+            const email = req.query.email;
+            const query = { 
+                decoratorEmail: email,
+                paymentStatus: 'paid',
+                serviceStatus: 'Completed' 
+            };
+
+            const bookings = await bookingsCollection.find(query).sort({ booking_date: -1 }).toArray();
+            const totalEarnings = bookings.reduce((sum, item) => {
+                const cost = parseFloat(item.service_cost);
+                return sum + (isNaN(cost) ? 0 : cost);
+            }, 0);
+            const completedTasks = bookings.length;
+            const chartData = bookings.slice(0, 6).map(item => {
+                const dateObj = new Date(item.booking_date);
+                const dateStr = !isNaN(dateObj) 
+                    ? dateObj.toLocaleDateString('en-US', { day: 'numeric', month: 'short' }) 
+                    : 'N/A';
+                
+                return {
+                    name: item.service_name?.substring(0, 10) + '...', // Short name
+                    date: dateStr,
+                    amount: parseFloat(item.service_cost || 0)
+                };
+            }).reverse();
+
+            res.send({
+                totalEarnings,
+                completedTasks,
+                bookings,
+                chartData
+            });
+
+        } catch (error) {
+            console.error("Earnings API Error:", error);
+            res.status(500).send({ message: "Internal Server Error", error: error.message });
+        }
+    });
     /* --------------------------------- */
     /* Service Related APIS */
     /* --------------------------------- */
