@@ -272,6 +272,53 @@ async function run() {
       }
     );
     /* USERS APIS */
+    /* USER STAT APIS */
+    app.get("/user-stats/:email", verifyFirebaseToken, async (req, res) => {
+      const email = req.params.email;
+      if (req.decoded_email !== email) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      try {
+        const query = { user_email: email };
+        const totalBookings = await bookingsCollection.countDocuments(query);
+        const payments = await paymentsCollection.aggregate([
+          { $match: { customerEmail: email } },
+          { $group: { _id: null, totalSpent: { $sum: "$amount" } } }
+        ]).toArray();
+        const totalSpent = payments.length > 0 ? payments[0].totalSpent : 0;
+        const pendingBookings = await bookingsCollection.countDocuments({
+           user_email: email, 
+           paymentStatus: 'pending'
+        });
+        const myBookings = await bookingsCollection.aggregate([
+          { $match: { user_email: email } },
+          { $sort: { createdAt: -1 } },
+          { $limit: 5 },
+          {
+            $lookup: {
+              from: "trackings",
+              let: { booking_trackingId: "$trackingId" },
+              pipeline: [
+                { $match: { $expr: { $eq: ["$trackingId", "$$booking_trackingId"] } } },
+                { $sort: { createdAt: -1 } }
+              ],
+              as: "trackingHistory"
+            }
+          }
+        ]).toArray();
+
+        res.send({
+          totalBookings,
+          totalSpent,
+          pendingBookings,
+          myBookings
+        });
+
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Error fetching user stats" });
+      }
+    });
     /* create user */
     app.post("/users", async (req, res) => {
       const user = req.body;
