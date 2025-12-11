@@ -27,7 +27,7 @@ app.use(cors());
 const verifyFirebaseToken = async (req, res, next) => {
   const token = req.headers.authorization;
   if (!token) {
-    res.status(401).send({ message: "unauthorized access" });
+    return res.status(401).send({ message: "unauthorized access" });
   }
   try {
     const idToken = token.split(" ")[1];
@@ -35,7 +35,7 @@ const verifyFirebaseToken = async (req, res, next) => {
     req.decoded_email = decoded.email;
     next();
   } catch (error) {
-    res.status(401).send({ message: "unauthorized access" });
+    return res.status(401).send({ message: "unauthorized access" });
   }
 };
 
@@ -68,7 +68,7 @@ async function run() {
 
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded_email;
-      const query = { email };
+      const query = { email: email };
       const user = await usersCollection.findOne(query);
       if (!user || user.role !== "admin") {
         return res.status(403).send({ message: "forbidden access" });
@@ -77,14 +77,14 @@ async function run() {
     };
     const verifyDecorator = async (req, res, next) => {
       const email = req.decoded_email;
-      const query = { email };
+      const query = { email: email };
       const user = await usersCollection.findOne(query);
       if (!user || user.role !== "decorator") {
         return res.status(403).send({ message: "forbidden access" });
       }
       next();
     };
-    const logTracking = async (trackingId, status) => {
+    const logTracking = async (trackingId, status, customDetails = null) => {
       const existing = await trackingsCollection.findOne({
         trackingId,
         status,
@@ -92,8 +92,8 @@ async function run() {
       if (existing) return null;
       const log = {
         trackingId,
-        status,
-        details: status.split("-").join(" "),
+        status: status.split("_").join(" "),
+        details: customDetails || status.split("-").join(" "),
         createdAt: new Date(),
       };
       const result = await trackingsCollection.insertOne(log);
@@ -468,7 +468,46 @@ async function run() {
 
         const result = await bookingsCollection.updateOne(filter, updatedDoc);
         if (result.modifiedCount > 0 && trackingId) {
-          await logTracking(trackingId, serviceStatus);
+          await logTracking(trackingId, serviceStatus, details);
+        }
+
+        res.send(result);
+      }
+    );
+    // GET: Fetch Tasks for specific Decorator
+    app.get(
+      "/bookings/assigned",
+      verifyFirebaseToken,
+      verifyDecorator,
+      async (req, res) => {
+        const email = req.query.email;
+        if (req.decoded_email !== email) {
+          return res.status(403).send({ message: "forbidden access" });
+        }
+        const query = { decoratorEmail: email };
+
+        const result = await bookingsCollection.find(query).toArray();
+        res.send(result);
+      }
+    );
+    /* update booking status from decorator */
+    app.patch(
+      "/bookings/decorator-status/:id",
+      verifyFirebaseToken,
+      verifyDecorator,
+      async (req, res) => {
+        const id = req.params.id;
+        const filter = { _id: new ObjectId(id) };
+
+        const { serviceStatus, trackingId, details } = req.body;
+        const updatedDoc = {
+          $set: {
+            serviceStatus: serviceStatus,
+          },
+        };
+        const result = await bookingsCollection.updateOne(filter, updatedDoc);
+        if (result.modifiedCount > 0 && trackingId) {
+          await logTracking(trackingId, serviceStatus, details);
         }
 
         res.send(result);
