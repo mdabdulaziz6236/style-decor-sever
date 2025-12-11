@@ -343,6 +343,59 @@ async function run() {
             res.status(500).send({ message: "Internal Server Error", error: error.message });
         }
     });
+// ---------------------------------------------------------
+    //  DECORATOR HOME STATS API (Clean Data Only)
+    // ---------------------------------------------------------
+    app.get('/decorator/stats/homepage', verifyFirebaseToken, verifyDecorator, async (req, res) => {
+        try {
+            const email = req.query.email;
+            if (req.decoded_email !== email) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            const query = { decoratorEmail: email };
+            const allTasks = await bookingsCollection.find(query).toArray();
+            // 1. Calculations
+            const totalAssigned = allTasks.length; 
+            const pendingCount = allTasks.filter(task => task.serviceStatus === 'Decorator_Assigned').length;
+            const acceptedCount = allTasks.filter(task => task.serviceStatus === 'Decorator_Accepted').length;
+            const workingCount = allTasks.filter(task => task.serviceStatus === 'Working').length;
+            const completedCount = allTasks.filter(task => task.serviceStatus === 'Completed').length;
+
+            // 2. Earnings
+            const totalEarnings = allTasks.reduce((sum, task) => {
+                if (task.paymentStatus === 'paid' && task.serviceStatus === 'Completed') {
+                    return sum + (parseFloat(task.service_cost) || 0);
+                }
+                return sum;
+            }, 0);
+
+            // 3. Pie Chart Data
+            const pieData = [
+                { name: 'Assigned', value: pendingCount },
+                { name: 'Accepted', value: acceptedCount },
+                { name: 'Working', value: workingCount },
+                { name: 'Completed', value: completedCount }
+            ];
+            const recentBookings = await bookingsCollection
+                .find(query)
+                .sort({ assignedAt: -1 })
+                .limit(5)
+                .toArray();
+
+            res.send({
+                totalAssigned,
+                activeTasks: workingCount,
+                completedTasks: completedCount,
+                totalEarnings,
+                pieData,
+                recentBookings
+            });
+
+        } catch (error) {
+            console.error("Stats API Error:", error);
+            res.status(500).send({ message: "Internal Server Error" });
+        }
+    });
     /* --------------------------------- */
     /* Service Related APIS */
     /* --------------------------------- */
@@ -527,7 +580,7 @@ async function run() {
         }
         const query = { decoratorEmail: email };
 
-        const result = await bookingsCollection.find(query).toArray();
+        const result = await bookingsCollection.find(query).sort({ booking_date: -1 }).toArray();
         res.send(result);
       }
     );
