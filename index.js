@@ -85,6 +85,11 @@ async function run() {
       next();
     };
     const logTracking = async (trackingId, status) => {
+      const existing = await trackingsCollection.findOne({
+        trackingId,
+        status,
+      });
+      if (existing) return null;
       const log = {
         trackingId,
         status,
@@ -176,7 +181,7 @@ async function run() {
         };
 
         const resultPayment = await paymentsCollection.insertOne(payment);
-       await logTracking(trackingId, "booking-paid");
+        await logTracking(trackingId, "booking-paid");
         return res.send({
           success: true,
           modifyBooking: result,
@@ -189,7 +194,7 @@ async function run() {
     });
     app.get("/payments", async (req, res) => {
       const email = req.query.email;
-      const query = { customerEmail:email };
+      const query = { customerEmail: email };
       const result = await paymentsCollection.find(query).toArray();
       res.send(result);
     });
@@ -388,6 +393,87 @@ async function run() {
       const result = await bookingsCollection.updateOne(filter, updateDoc);
       res.send(result);
     });
+    // ---------------------------------------------------------
+    // ASSIGN DECORATOR RELATED APIs
+    // ---------------------------------------------------------
+    app.get(
+      "/bookings-assign",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        const serviceStatus = req.query.serviceStatus;
+        const paymentStatus = req.query.paymentStatus;
+
+        let query = {};
+        if (serviceStatus) {
+          query.serviceStatus = serviceStatus;
+        }
+
+        if (paymentStatus) {
+          query.paymentStatus = paymentStatus;
+        }
+
+        const result = await bookingsCollection.find(query).toArray();
+        res.send(result);
+      }
+    );
+
+    // 2. GET: Fetch Decorators (Filtered by District)
+    app.get(
+      "/decorators/available",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        const district = req.query.district;
+        let query = {
+          workStatus: "available",
+          status: "approved",
+        };
+        if (district) {
+          query.district = { $regex: district, $options: "i" };
+        }
+
+        const result = await decoratorsCollection.find(query).toArray();
+        res.send(result);
+      }
+    );
+
+    // 3. PATCH: Assign Decorator (Update Status & Log)
+    app.patch(
+      "/bookings/status/:id",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const filter = { _id: new ObjectId(id) };
+        const {
+          serviceStatus,
+          decoratorId,
+          decoratorName,
+          decoratorEmail,
+          trackingId,
+          details,
+        } = req.body;
+
+        const updatedDoc = {
+          $set: {
+            serviceStatus: serviceStatus,
+            decoratorId: decoratorId,
+            decoratorName: decoratorName,
+            decoratorEmail: decoratorEmail,
+            assignedAt: new Date(),
+            details: details,
+          },
+        };
+
+        const result = await bookingsCollection.updateOne(filter, updatedDoc);
+        if (result.modifiedCount > 0 && trackingId) {
+          await logTracking(trackingId, serviceStatus);
+        }
+
+        res.send(result);
+      }
+    );
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
