@@ -64,6 +64,7 @@ async function run() {
     const bookingsCollection = db.collection("bookings");
     const trackingsCollection = db.collection("trackings");
     const paymentsCollection = db.collection("payments");
+    const reviewsCollection = db.collection("reviews");
 
     /* --------------MIDDLE ADMIN BEFORE ALLOWING ADMIN ACTIVITY------------- */
     /* --------------!!! MUST BE USED AFTER VerifyFBToken !!!!------------- */
@@ -101,6 +102,67 @@ async function run() {
       const result = await trackingsCollection.insertOne(log);
       return result;
     };
+
+    
+    /* --------------------------------- */
+    /* REVIEW FOR DECORATOR API */
+    /* --------------------------------- */
+    app.post("/reviews", verifyFirebaseToken, async (req, res) => {
+      const review = req.body;
+      
+      try {
+          review.rating = parseFloat(review.rating); 
+          const result = await reviewsCollection.insertOne(review);
+          const filterBooking = { _id: new ObjectId(review.bookingId) };
+          const updateBooking = {
+            $set: { isReviewed: true }
+          };
+          await bookingsCollection.updateOne(filterBooking, updateBooking);
+          const stats = await reviewsCollection.aggregate([
+            { 
+                $match: { decoratorEmail: review.decoratorEmail }
+            },
+            { 
+              $group: { 
+                _id: "$decoratorEmail", 
+                averageRating: { $avg: "$rating" }, 
+                totalReviews: { $sum: 1 }         
+              } 
+            }
+          ]).toArray();
+          if (stats.length > 0) {
+            const { averageRating, totalReviews } = stats[0];
+            const newRating = parseFloat(averageRating.toFixed(1));
+
+            await decoratorsCollection.updateOne(
+              { email: review.decoratorEmail },
+              { 
+                $set: { 
+                  rating: newRating,
+                  reviewCount: totalReviews
+                } 
+              }
+            );
+            await usersCollection.updateOne(
+              { email: review.decoratorEmail },
+              { 
+                $set: { 
+                  rating: newRating,
+                  reviewCount: totalReviews
+                } 
+              }
+            );
+          }
+
+          res.send(result);
+
+      } catch (error) {
+          console.error("Error posting review:", error);
+          res.status(500).send({ message: "Failed to post review" });
+      }
+    });
+
+
     /* --------------------------------- */
     /* Service Related APIS */
     /* --------------------------------- */
