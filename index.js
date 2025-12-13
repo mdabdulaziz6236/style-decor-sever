@@ -470,6 +470,27 @@ async function run() {
     /* --------------------------------- */
     /* Decorators Related APIS */
     /* --------------------------------- */
+    // Get Top Decorators API (Home Page Section)
+    app.get('/decorators/top/rating/home', async (req, res) => {
+        try {
+            const query = { 
+                status: 'approved',
+                workStatus: 'available' 
+            };
+            const result = await decoratorsCollection.find(query)
+                .sort({ 
+                    rating: -1,    
+                    experience: -1  
+                }) 
+                .limit(6)
+                .toArray();
+            
+            res.send(result);
+        } catch (error) {
+            console.error("Error fetching top decorators:", error);
+            res.status(500).send({ message: "Error fetching decorators" });
+        }
+    });
     app.post("/decorators", async (req, res) => {
       const decorator = req.body;
       decorator.status = "pending";
