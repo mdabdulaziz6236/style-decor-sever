@@ -10,10 +10,11 @@ const crypto = require("crypto");
 
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
 const serviceAccount = JSON.parse(decoded);
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+}
 // --- Tracking ID Generator Function ---
 const generateTrackingId = () => {
   const prefix = "TSD";
@@ -375,7 +376,7 @@ async function run() {
       res.send(result);
     });
     /* get role from user */
-    app.get("/users/:email/role", async (req, res) => {
+    app.get("/users/:email/role",verifyFirebaseToken, async (req, res) => {
       const email = req.params.email;
       const query = { email };
       const user = await usersCollection.findOne(query);
@@ -523,6 +524,7 @@ async function run() {
     // ---------------------------------------------------------
     //  DECORATOR HOME STATS API (Clean Data Only)
     // ---------------------------------------------------------
+// Decorator Dashboard Stats API (Detailed Breakdown)
     app.get(
       "/decorator/stats/homepage",
       verifyFirebaseToken,
@@ -533,55 +535,61 @@ async function run() {
           if (req.decoded_email !== email) {
             return res.status(403).send({ message: "forbidden access" });
           }
-          const query = { decoratorEmail: email };
-          const allTasks = await bookingsCollection.find(query).toArray();
-          // 1. Calculations
-          const totalAssigned = allTasks.length;
-          const pendingCount = allTasks.filter(
-            (task) => task.serviceStatus === "Decorator_Assigned"
-          ).length;
-          const acceptedCount = allTasks.filter(
-            (task) => task.serviceStatus === "Decorator_Accepted"
-          ).length;
-          const workingCount = allTasks.filter(
-            (task) => task.serviceStatus === "Working"
-          ).length;
-          const completedCount = allTasks.filter(
-            (task) => task.serviceStatus === "Completed"
-          ).length;
-
-          // 2. Earnings
-          const totalEarnings = allTasks.reduce((sum, task) => {
-            if (
-              task.paymentStatus === "paid" &&
-              task.serviceStatus === "Completed"
-            ) {
-              return sum + (parseFloat(task.service_cost) || 0);
+          const statsData = await bookingsCollection.aggregate([
+            { $match: { decoratorEmail: email } },
+            {
+              $group: {
+                _id: "$serviceStatus",
+                count: { $sum: 1 }
+              }
             }
-            return sum;
-          }, 0);
+          ]).toArray();
 
-          // 3. Pie Chart Data
-          const pieData = [
-            { name: "Assigned", value: pendingCount },
-            { name: "Accepted", value: acceptedCount },
-            { name: "Working", value: workingCount },
-            { name: "Completed", value: completedCount },
-          ];
+          const pieData = statsData.map(item => ({
+            name: item._id || "Unknown",
+            value: item.count
+          }));
+          const getCount = (statusName) => pieData.find(d => d.name === statusName)?.value || 0;
+
+          const detailedCounts = {
+            assigned: getCount("Decorator_Assigned"),
+            accepted: getCount("Decorator_Accepted"),
+            planning: getCount("Decorator_Planing"),
+            materials: getCount("Materials_Prepared"),
+            onWay: getCount("On_The_Way_To_Venue"),
+            working: getCount("Working"),
+            completed: getCount("Completed")
+          };
+          const earningsResult = await bookingsCollection.aggregate([
+            { 
+              $match: { 
+                decoratorEmail: email,
+                serviceStatus: "Completed",
+                paymentStatus: "paid"
+              } 
+            },
+            {
+              $group: {
+                _id: null,
+                totalEarnings: { $sum: "$service_cost" }
+              }
+            }
+          ]).toArray();
+
+          const totalEarnings = earningsResult.length > 0 ? earningsResult[0].totalEarnings : 0;
           const recentBookings = await bookingsCollection
-            .find(query)
+            .find({ decoratorEmail: email })
             .sort({ assignedAt: -1 })
             .limit(5)
             .toArray();
 
           res.send({
-            totalAssigned,
-            activeTasks: workingCount,
-            completedTasks: completedCount,
+            detailedCounts,
             totalEarnings,
-            pieData,
+            pieData, 
             recentBookings,
           });
+
         } catch (error) {
           console.error("Stats API Error:", error);
           res.status(500).send({ message: "Internal Server Error" });
@@ -803,10 +811,10 @@ async function run() {
       }
     );
     // Send a ping to confirm a successful connection
-    // await client.db("admin").command({ ping: 1 });
-    // console.log(
-    //   "Pinged your deployment. You successfully connected to MongoDB!"
-    // );
+    await client.db("admin").command({ ping: 1 });
+    console.log(
+      "Pinged your deployment. You successfully connected to MongoDB!"
+    );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
@@ -821,3 +829,4 @@ app.get("/", (req, res) => {
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
+module.exports = app;
