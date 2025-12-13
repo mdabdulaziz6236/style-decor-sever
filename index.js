@@ -8,7 +8,9 @@ const port = process.env.PORT || 3000;
 const admin = require("firebase-admin");
 const crypto = require("crypto");
 
-const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf8"
+);
 const serviceAccount = JSON.parse(decoded);
 if (!admin.apps.length) {
   admin.initializeApp({
@@ -103,65 +105,80 @@ async function run() {
       return result;
     };
 
-    
     /* --------------------------------- */
     /* REVIEW FOR DECORATOR API */
     /* --------------------------------- */
-    app.post("/reviews", verifyFirebaseToken, async (req, res) => {
-      const review = req.body;
-      
+    // Get Top Reviews API (Public - Home Page)
+    app.get("/reviews/top", async (req, res) => {
       try {
-          review.rating = parseFloat(review.rating); 
-          const result = await reviewsCollection.insertOne(review);
-          const filterBooking = { _id: new ObjectId(review.bookingId) };
-          const updateBooking = {
-            $set: { isReviewed: true }
-          };
-          await bookingsCollection.updateOne(filterBooking, updateBooking);
-          const stats = await reviewsCollection.aggregate([
-            { 
-                $match: { decoratorEmail: review.decoratorEmail }
-            },
-            { 
-              $group: { 
-                _id: "$decoratorEmail", 
-                averageRating: { $avg: "$rating" }, 
-                totalReviews: { $sum: 1 }         
-              } 
-            }
-          ]).toArray();
-          if (stats.length > 0) {
-            const { averageRating, totalReviews } = stats[0];
-            const newRating = parseFloat(averageRating.toFixed(1));
+        const query = { rating: { $gte: 3 } };
 
-            await decoratorsCollection.updateOne(
-              { email: review.decoratorEmail },
-              { 
-                $set: { 
-                  rating: newRating,
-                  reviewCount: totalReviews
-                } 
-              }
-            );
-            await usersCollection.updateOne(
-              { email: review.decoratorEmail },
-              { 
-                $set: { 
-                  rating: newRating,
-                  reviewCount: totalReviews
-                } 
-              }
-            );
-          }
+        const result = await reviewsCollection
+          .find(query)
+          .sort({ date: -1 })
+          .limit(6)
+          .toArray();
 
-          res.send(result);
-
+        res.send(result);
       } catch (error) {
-          console.error("Error posting review:", error);
-          res.status(500).send({ message: "Failed to post review" });
+        res.status(500).send({ message: "Error fetching reviews" });
       }
     });
+    app.post("/reviews", verifyFirebaseToken, async (req, res) => {
+      const review = req.body;
 
+      try {
+        review.rating = parseFloat(review.rating);
+        const result = await reviewsCollection.insertOne(review);
+        const filterBooking = { _id: new ObjectId(review.bookingId) };
+        const updateBooking = {
+          $set: { isReviewed: true },
+        };
+        await bookingsCollection.updateOne(filterBooking, updateBooking);
+        const stats = await reviewsCollection
+          .aggregate([
+            {
+              $match: { decoratorEmail: review.decoratorEmail },
+            },
+            {
+              $group: {
+                _id: "$decoratorEmail",
+                averageRating: { $avg: "$rating" },
+                totalReviews: { $sum: 1 },
+              },
+            },
+          ])
+          .toArray();
+        if (stats.length > 0) {
+          const { averageRating, totalReviews } = stats[0];
+          const newRating = parseFloat(averageRating.toFixed(1));
+
+          await decoratorsCollection.updateOne(
+            { email: review.decoratorEmail },
+            {
+              $set: {
+                rating: newRating,
+                reviewCount: totalReviews,
+              },
+            }
+          );
+          await usersCollection.updateOne(
+            { email: review.decoratorEmail },
+            {
+              $set: {
+                rating: newRating,
+                reviewCount: totalReviews,
+              },
+            }
+          );
+        }
+
+        res.send(result);
+      } catch (error) {
+        console.error("Error posting review:", error);
+        res.status(500).send({ message: "Failed to post review" });
+      }
+    });
 
     /* --------------------------------- */
     /* Service Related APIS */
@@ -345,85 +362,111 @@ async function run() {
       try {
         const query = { user_email: email };
         const totalBookings = await bookingsCollection.countDocuments(query);
-        const payments = await paymentsCollection.aggregate([
-          { $match: { customerEmail: email } },
-          { $group: { _id: null, totalSpent: { $sum: "$amount" } } }
-        ]).toArray();
+        const payments = await paymentsCollection
+          .aggregate([
+            { $match: { customerEmail: email } },
+            { $group: { _id: null, totalSpent: { $sum: "$amount" } } },
+          ])
+          .toArray();
         const totalSpent = payments.length > 0 ? payments[0].totalSpent : 0;
         const pendingBookings = await bookingsCollection.countDocuments({
-           user_email: email, 
-           paymentStatus: 'pending'
+          user_email: email,
+          paymentStatus: "pending",
         });
-        const myBookings = await bookingsCollection.aggregate([
-          { $match: { user_email: email } },
-          { $sort: { createdAt: -1 } },
-          { $limit: 5 },
-          {
-            $lookup: {
-              from: "trackings",
-              let: { booking_trackingId: "$trackingId" },
-              pipeline: [
-                { $match: { $expr: { $eq: ["$trackingId", "$$booking_trackingId"] } } },
-                { $sort: { createdAt: -1 } }
-              ],
-              as: "trackingHistory"
-            }
-          }
-        ]).toArray();
+        const myBookings = await bookingsCollection
+          .aggregate([
+            { $match: { user_email: email } },
+            { $sort: { createdAt: -1 } },
+            { $limit: 5 },
+            {
+              $lookup: {
+                from: "trackings",
+                let: { booking_trackingId: "$trackingId" },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: { $eq: ["$trackingId", "$$booking_trackingId"] },
+                    },
+                  },
+                  { $sort: { createdAt: -1 } },
+                ],
+                as: "trackingHistory",
+              },
+            },
+          ])
+          .toArray();
 
         res.send({
           totalBookings,
           totalSpent,
           pendingBookings,
-          myBookings
+          myBookings,
         });
-
       } catch (error) {
         console.error(error);
         res.status(500).send({ message: "Error fetching user stats" });
       }
     });
     /* MANAGE USER  */
-    app.get('/users-for-admin', verifyFirebaseToken, verifyAdmin, async (req, res) => {
-      const result = await usersCollection.find().toArray();
-      res.send(result);
-    });
-    app.patch('/users/admin/:id', verifyFirebaseToken, verifyAdmin, async (req, res) => {
-      const id = req.params.id;
-      const filter = { _id: new ObjectId(id) };
-      const updatedDoc = {
-        $set: {
-          role: 'admin'
-        }
-      };
-      const result = await usersCollection.updateOne(filter, updatedDoc);
-      res.send(result);
-    });
-    app.delete('/users/:id', verifyFirebaseToken, verifyAdmin, async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
+    app.get(
+      "/users-for-admin",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        const result = await usersCollection.find().toArray();
+        res.send(result);
+      }
+    );
+    app.patch(
+      "/users/admin/:id",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const filter = { _id: new ObjectId(id) };
+        const updatedDoc = {
+          $set: {
+            role: "admin",
+          },
+        };
+        const result = await usersCollection.updateOne(filter, updatedDoc);
+        res.send(result);
+      }
+    );
+    app.delete(
+      "/users/:id",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
 
-      try {
-        const user = await usersCollection.findOne(query);
-
-        if (!user) {
-          return res.status(404).send({ message: "User not found in database" });
-        }
         try {
+          const user = await usersCollection.findOne(query);
+
+          if (!user) {
+            return res
+              .status(404)
+              .send({ message: "User not found in database" });
+          }
+          try {
             const firebaseUser = await admin.auth().getUserByEmail(user.email);
             await admin.auth().deleteUser(firebaseUser.uid);
             console.log("Successfully deleted user from Firebase:", user.email);
-        } catch (firebaseError) {
-            console.log("Error deleting from Firebase (might not exist):", firebaseError.message);
+          } catch (firebaseError) {
+            console.log(
+              "Error deleting from Firebase (might not exist):",
+              firebaseError.message
+            );
+          }
+          const result = await usersCollection.deleteOne(query);
+          res.send(result);
+        } catch (error) {
+          console.error("Error in delete API:", error);
+          res.status(500).send({ message: "Internal Server Error" });
         }
-        const result = await usersCollection.deleteOne(query);
-        res.send(result);
-
-      } catch (error) {
-        console.error("Error in delete API:", error);
-        res.status(500).send({ message: "Internal Server Error" });
       }
-    });
+    );
     /* create user */
     app.post("/users", async (req, res) => {
       const user = req.body;
@@ -438,7 +481,7 @@ async function run() {
       res.send(result);
     });
     /* get role from user */
-    app.get("/users/:email/role",verifyFirebaseToken, async (req, res) => {
+    app.get("/users/:email/role", verifyFirebaseToken, async (req, res) => {
       const email = req.params.email;
       const query = { email };
       const user = await usersCollection.findOne(query);
@@ -471,25 +514,26 @@ async function run() {
     /* Decorators Related APIS */
     /* --------------------------------- */
     // Get Top Decorators API (Home Page Section)
-    app.get('/decorators/top/rating/home', async (req, res) => {
-        try {
-            const query = { 
-                status: 'approved',
-                workStatus: 'available' 
-            };
-            const result = await decoratorsCollection.find(query)
-                .sort({ 
-                    rating: -1,    
-                    experience: -1  
-                }) 
-                .limit(6)
-                .toArray();
-            
-            res.send(result);
-        } catch (error) {
-            console.error("Error fetching top decorators:", error);
-            res.status(500).send({ message: "Error fetching decorators" });
-        }
+    app.get("/decorators/top/rating/home", async (req, res) => {
+      try {
+        const query = {
+          status: "approved",
+          workStatus: "available",
+        };
+        const result = await decoratorsCollection
+          .find(query)
+          .sort({
+            rating: -1,
+            experience: -1,
+          })
+          .limit(6)
+          .toArray();
+
+        res.send(result);
+      } catch (error) {
+        console.error("Error fetching top decorators:", error);
+        res.status(500).send({ message: "Error fetching decorators" });
+      }
     });
     app.post("/decorators", async (req, res) => {
       const decorator = req.body;
@@ -607,7 +651,7 @@ async function run() {
     // ---------------------------------------------------------
     //  DECORATOR HOME STATS API (Clean Data Only)
     // ---------------------------------------------------------
-// Decorator Dashboard Stats API (Detailed Breakdown)
+    // Decorator Dashboard Stats API (Detailed Breakdown)
     app.get(
       "/decorator/stats/homepage",
       verifyFirebaseToken,
@@ -618,21 +662,24 @@ async function run() {
           if (req.decoded_email !== email) {
             return res.status(403).send({ message: "forbidden access" });
           }
-          const statsData = await bookingsCollection.aggregate([
-            { $match: { decoratorEmail: email } },
-            {
-              $group: {
-                _id: "$serviceStatus",
-                count: { $sum: 1 }
-              }
-            }
-          ]).toArray();
+          const statsData = await bookingsCollection
+            .aggregate([
+              { $match: { decoratorEmail: email } },
+              {
+                $group: {
+                  _id: "$serviceStatus",
+                  count: { $sum: 1 },
+                },
+              },
+            ])
+            .toArray();
 
-          const pieData = statsData.map(item => ({
+          const pieData = statsData.map((item) => ({
             name: item._id || "Unknown",
-            value: item.count
+            value: item.count,
           }));
-          const getCount = (statusName) => pieData.find(d => d.name === statusName)?.value || 0;
+          const getCount = (statusName) =>
+            pieData.find((d) => d.name === statusName)?.value || 0;
 
           const detailedCounts = {
             assigned: getCount("Decorator_Assigned"),
@@ -641,25 +688,28 @@ async function run() {
             materials: getCount("Materials_Prepared"),
             onWay: getCount("On_The_Way_To_Venue"),
             working: getCount("Working"),
-            completed: getCount("Completed")
+            completed: getCount("Completed"),
           };
-          const earningsResult = await bookingsCollection.aggregate([
-            { 
-              $match: { 
-                decoratorEmail: email,
-                serviceStatus: "Completed",
-                paymentStatus: "paid"
-              } 
-            },
-            {
-              $group: {
-                _id: null,
-                totalEarnings: { $sum: "$service_cost" }
-              }
-            }
-          ]).toArray();
+          const earningsResult = await bookingsCollection
+            .aggregate([
+              {
+                $match: {
+                  decoratorEmail: email,
+                  serviceStatus: "Completed",
+                  paymentStatus: "paid",
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  totalEarnings: { $sum: "$service_cost" },
+                },
+              },
+            ])
+            .toArray();
 
-          const totalEarnings = earningsResult.length > 0 ? earningsResult[0].totalEarnings : 0;
+          const totalEarnings =
+            earningsResult.length > 0 ? earningsResult[0].totalEarnings : 0;
           const recentBookings = await bookingsCollection
             .find({ decoratorEmail: email })
             .sort({ assignedAt: -1 })
@@ -669,10 +719,9 @@ async function run() {
           res.send({
             detailedCounts,
             totalEarnings,
-            pieData, 
+            pieData,
             recentBookings,
           });
-
         } catch (error) {
           console.error("Stats API Error:", error);
           res.status(500).send({ message: "Internal Server Error" });
